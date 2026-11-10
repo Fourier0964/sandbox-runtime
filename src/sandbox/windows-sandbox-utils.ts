@@ -551,6 +551,11 @@ export interface WindowsSandboxParams {
   /** Per-session proxy auth token; embedded in proxy env URLs. */
   proxyAuthToken?: string
   /**
+   * Parent proxy is on loopback. Loopback destinations stay on the proxy:
+   * `allowLoopback` does not put them in `no_proxy`.
+   */
+  routeLoopbackThroughProxy?: boolean
+  /**
    * The session's `network.allowLocalBinding`. `srt-win exec` launches
    * nothing (exit 19) unless the install recorded the same mode. When
    * true, with a proxy, `no_proxy` names the loopback hosts.
@@ -4392,6 +4397,7 @@ export function wrapCommandWithSandboxWindows(p: WindowsSandboxParams): {
       p.proxyAuthToken,
       undefined,
       encodeSandboxedCommand(attributionKeyFor(p.command, p.commandId)),
+      p.routeLoopbackThroughProxy,
     ),
   )
   // TMPDIR is a POSIX path meant for the macOS/Linux FS sandbox — it
@@ -4411,7 +4417,11 @@ export function wrapCommandWithSandboxWindows(p: WindowsSandboxParams): {
   delete generated.no_proxy
   // With loopback open the fence permits direct loopback connects, so the
   // loopback hosts (only: private networks are still fenced) skip the proxy.
-  if (p.allowLoopback && (p.httpProxyPort || p.socksProxyPort)) {
+  if (
+    p.allowLoopback &&
+    !p.routeLoopbackThroughProxy &&
+    (p.httpProxyPort || p.socksProxyPort)
+  ) {
     generated.no_proxy = WINDOWS_LOOPBACK_NO_PROXY
   }
 

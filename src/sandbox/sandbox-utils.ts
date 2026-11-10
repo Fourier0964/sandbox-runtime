@@ -776,6 +776,13 @@ export function generateProxyEnvVars(
   proxyAuthToken?: string,
   skipTmpdir?: boolean,
   encodedCommand?: string,
+  /**
+   * When true, loopback destinations are not listed in `NO_PROXY`. The
+   * parent proxy is itself on loopback and is the gate for those
+   * destinations; clients must send them here instead of dialing direct.
+   * Private and link-local ranges stay in `NO_PROXY`.
+   */
+  routeLoopbackThroughProxy?: boolean,
 ): string[] {
   // When the proxy requires auth, embed the credential in the URL so clients
   // send Proxy-Authorization automatically. Only the sandbox child sees this
@@ -819,16 +826,16 @@ export function generateProxyEnvVars(
     return envVars
   }
 
-  // Always set NO_PROXY to exclude localhost and private networks from
-  // proxying. *.local is intentionally absent: under network restriction the
+  // Always set NO_PROXY to exclude private networks from proxying, and
+  // loopback too unless the parent proxy is itself on loopback (then
+  // loopback destinations are that parent's to accept or refuse).
+  // *.local is intentionally absent: under network restriction the
   // child has no usable resolver/routes (bwrap --unshare-net on Linux,
   // loopback-only under seatbelt), so a NO_PROXY match makes the client try
   // direct getaddrinfo() and fail. Routing .local hostnames through the proxy
   // lets the parent resolve them (e.g. Kubernetes *.svc.cluster.local).
   const noProxyAddresses = [
-    'localhost',
-    '127.0.0.1',
-    '::1',
+    ...(routeLoopbackThroughProxy ? [] : ['localhost', '127.0.0.1', '::1']),
     '169.254.0.0/16', // Link-local
     '10.0.0.0/8', // Private network
     '172.16.0.0/12', // Private network

@@ -810,6 +810,14 @@ describe('wrapCommandWithSandboxWindows (pure, all platforms)', () => {
     expect(envArgs.some(e => e.startsWith('https_proxy='))).toBe(true)
     const closed = envOf(wrapCommandWithSandboxWindows(proxied).argv)
     expect(closed.some(e => /^no_proxy=/i.test(e))).toBe(false)
+    const viaParent = envOf(
+      wrapCommandWithSandboxWindows({
+        ...proxied,
+        allowLoopback: true,
+        routeLoopbackThroughProxy: true,
+      }).argv,
+    )
+    expect(viaParent.some(e => /^no_proxy=/i.test(e))).toBe(false)
     const bare = wrapCommandWithSandboxWindows({
       command: 'x',
       allowLoopback: true,

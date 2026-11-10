@@ -5,8 +5,11 @@ import {
   isValidHost,
   openConnectTunnel,
   redactUrl,
+  delegatesDomainPolicyToParent,
   resolveParentProxy,
   selectParentProxyUrl,
+  hostIsLoopback,
+  parentProxyHostsAreLoopback,
   shouldBypassParentProxy,
   stripBrackets,
   stripHopByHop,
@@ -66,6 +69,140 @@ describe('parent-proxy: resolveParentProxy', () => {
     const r = resolveParentProxy(undefined)
     expect(r?.httpUrl?.hostname).toBe('plain')
     expect(r?.httpsUrl?.hostname).toBe('secure')
+  })
+
+  test('env-only parent does not delegate domain policy', () => {
+    process.env.HTTP_PROXY = 'http://env-proxy:8080'
+    const r = resolveParentProxy(undefined)
+    expect(r?.delegateDomainPolicy).toBe(false)
+    expect(
+      delegatesDomainPolicyToParent(r, 'example.com', { isHttps: true }),
+    ).toBe(false)
+  })
+
+  test('delegateDomainPolicy applies when the URL comes from the environment', () => {
+    process.env.HTTP_PROXY = 'http://env-proxy:8080'
+    const r = resolveParentProxy({ delegateDomainPolicy: true })
+    expect(
+      delegatesDomainPolicyToParent(r, 'example.com', { isHttps: true }),
+    ).toBe(true)
+    expect(
+      delegatesDomainPolicyToParent(r, 'example.com', { isHttps: false }),
+    ).toBe(true)
+  })
+})
+
+describe('parent-proxy: delegateDomainPolicy', () => {
+  const saved: Record<string, string | undefined> = {}
+  const vars = [
+    'HTTP_PROXY',
+    'http_proxy',
+    'HTTPS_PROXY',
+    'https_proxy',
+    'NO_PROXY',
+    'no_proxy',
+  ]
+  beforeEach(() => {
+    for (const v of vars) {
+      saved[v] = process.env[v]
+      delete process.env[v]
+    }
+  })
+  afterEach(() => {
+    for (const v of vars) {
+      if (saved[v] === undefined) delete process.env[v]
+      else process.env[v] = saved[v]
+    }
+  })
+
+  test('flag off keeps every destination on the local lists', () => {
+    const r = resolveParentProxy({
+      http: 'http://p:1',
+      https: 'http://p:1',
+    })!
+    expect(
+      delegatesDomainPolicyToParent(r, 'example.com', { isHttps: true }),
+    ).toBe(false)
+  })
+
+  test('flag on delegates hosts that will use the parent', () => {
+    const r = resolveParentProxy({
+      http: 'http://p:1',
+      delegateDomainPolicy: true,
+    })!
+    expect(
+      delegatesDomainPolicyToParent(r, 'example.com', { isHttps: true }),
+    ).toBe(true)
+    expect(
+      delegatesDomainPolicyToParent(r, 'example.com', { isHttps: false }),
+    ).toBe(true)
+  })
+
+  test('loopback and NO_PROXY stay on the local lists', () => {
+    const r = resolveParentProxy({
+      http: 'http://p:1',
+      noProxy: 'internal.example',
+      delegateDomainPolicy: true,
+    })!
+    expect(
+      delegatesDomainPolicyToParent(r, '127.0.0.1', { isHttps: true }),
+    ).toBe(false)
+    expect(
+      delegatesDomainPolicyToParent(r, 'internal.example', { isHttps: true }),
+    ).toBe(false)
+    expect(
+      delegatesDomainPolicyToParent(r, 'other.example', { isHttps: true }),
+    ).toBe(true)
+  })
+
+  test('a loopback parent delegates loopback destinations', () => {
+    const r = resolveParentProxy({
+      http: 'http://127.0.0.1:9',
+      https: 'http://[::1]:9',
+      delegateDomainPolicy: true,
+    })!
+    expect(shouldBypassParentProxy(r, '127.0.0.1', { isHttps: true })).toBe(
+      false,
+    )
+    expect(shouldBypassParentProxy(r, 'localhost', { isHttps: false })).toBe(
+      false,
+    )
+    expect(shouldBypassParentProxy(r, '::1')).toBe(false)
+    expect(
+      delegatesDomainPolicyToParent(r, '127.0.0.1', { isHttps: true }),
+    ).toBe(true)
+    expect(
+      delegatesDomainPolicyToParent(r, 'localhost', { isHttps: false }),
+    ).toBe(true)
+  })
+
+  test('explicit noProxy still bypasses a loopback parent', () => {
+    const r = resolveParentProxy({
+      http: 'http://127.0.0.1:9',
+      noProxy: '127.0.0.1',
+      delegateDomainPolicy: true,
+    })!
+    expect(shouldBypassParentProxy(r, '127.0.0.1')).toBe(true)
+    expect(
+      delegatesDomainPolicyToParent(r, '127.0.0.1', { isHttps: true }),
+    ).toBe(false)
+    expect(shouldBypassParentProxy(r, 'localhost')).toBe(false)
+    expect(parentProxyHostsAreLoopback(r)).toBe(true)
+    expect(hostIsLoopback('127.0.0.1')).toBe(true)
+    expect(hostIsLoopback('proxy.example')).toBe(false)
+  })
+
+  test('plain HTTP does not delegate when only the https parent is set', () => {
+    const r = resolveParentProxy({
+      https: 'http://secure:1',
+      delegateDomainPolicy: true,
+    })!
+    expect(
+      delegatesDomainPolicyToParent(r, 'example.com', { isHttps: true }),
+    ).toBe(true)
+    expect(
+      delegatesDomainPolicyToParent(r, 'example.com', { isHttps: false }),
+    ).toBe(false)
   })
 })
 

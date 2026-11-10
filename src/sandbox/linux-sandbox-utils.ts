@@ -56,6 +56,11 @@ export interface LinuxSandboxParams {
   socksProxyPort?: number
   /** Per-session proxy auth token; embedded in proxy env URLs. */
   proxyAuthToken?: string
+  /**
+   * Parent proxy is on loopback, so the child's NO_PROXY must not exempt
+   * loopback destinations. They are sent to this proxy and tunnelled on.
+   */
+  routeLoopbackThroughProxy?: boolean
   /** Path to the TLS-termination CA cert; injected as trust env vars. */
   caCertPath?: string
   /** Path to the JVM proxy agent jar; injected via JAVA_TOOL_OPTIONS. */
@@ -3541,6 +3546,7 @@ export async function wrapCommandWithSandboxLinux(
     httpProxyPort,
     socksProxyPort,
     proxyAuthToken,
+    routeLoopbackThroughProxy,
     caCertPath,
     javaAgentJarPath,
     unsetEnvVars,
@@ -3735,6 +3741,7 @@ export async function wrapCommandWithSandboxLinux(
           proxyAuthToken,
           writeConfig === undefined,
           attributionKey,
+          routeLoopbackThroughProxy,
         )
         bwrapArgs.push(
           ...proxyEnv.flatMap((env: string) => {

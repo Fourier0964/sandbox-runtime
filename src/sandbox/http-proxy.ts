@@ -55,11 +55,13 @@ import { isResolvedAddressDenied } from './resolved-address-guard.js'
 import {
   canonicalizeHost,
   connectViaParentProxy,
+  delegatesDomainPolicyToParent,
   directRequestOptions,
   type DirectRequestOptions,
   dialDirect,
   formatAuthority,
   type DirectLookup,
+  isValidHost,
   openConnectTunnel,
   proxyAuthHeader,
   onUpstreamError,
@@ -243,6 +245,13 @@ export interface HttpProxyServerOptions {
    * Optional upstream HTTP proxy. When present, direct-connect traffic (i.e.
    * not routed via mitmProxy) is tunnelled through this parent instead of
    * connecting directly. NO_PROXY-matched hosts still connect directly.
+   * A loopback destination does too, unless the parent URL for this
+   * request is itself on loopback — then it is tunnelled. With
+   * `delegateDomainPolicy`, a destination that will use this parent
+   * skips `filter` (the parent owns the domain gate). A malformed host,
+   * a mitmProxy host, a NO_PROXY bypass, a loopback destination whose
+   * parent is not on loopback, and a scheme with no parent URL still go
+   * through `filter`.
    */
   parentProxy?: ResolvedParentProxy
 
@@ -712,15 +721,17 @@ export function createHttpProxyServer(options: HttpProxyServerOptions): Server {
       const { hostname: requestedHost, port } = target
 
       let reason: string | undefined
-      const allowed = await options.filter(
-        port,
-        requestedHost,
-        socket,
-        auth.encodedCommand,
-        given => {
-          reason = given
-        },
-      )
+      const allowed = parentDelegatesDomainPolicy(options, requestedHost, true)
+        ? true
+        : await options.filter(
+            port,
+            requestedHost,
+            socket,
+            auth.encodedCommand,
+            given => {
+              reason = given
+            },
+          )
       if (!allowed) {
         logForDebugging(`Connection blocked to ${requestedHost}:${port}`, {
           level: 'error',
@@ -918,7 +929,9 @@ export function createHttpProxyServer(options: HttpProxyServerOptions): Server {
       const parentUrl =
         !mitmSocketPath &&
         options.parentProxy &&
-        !shouldBypassParentProxy(options.parentProxy, hostname)
+        !shouldBypassParentProxy(options.parentProxy, hostname, {
+          isHttps: true,
+        })
           ? selectParentProxyUrl(options.parentProxy, { isHttps: true })
           : undefined
 
@@ -1059,12 +1072,18 @@ export function createHttpProxyServer(options: HttpProxyServerOptions): Server {
       const requestedHost = stripBrackets(url.hostname)
       const port = url.port ? parseInt(url.port, 10) : defaultPort
 
-      const allowed = await options.filter(
-        port,
+      const allowed = parentDelegatesDomainPolicy(
+        options,
         requestedHost,
-        req.socket,
-        auth.encodedCommand,
+        isHttps,
       )
+        ? true
+        : await options.filter(
+            port,
+            requestedHost,
+            req.socket,
+            auth.encodedCommand,
+          )
       if (!allowed) {
         logForDebugging(`HTTP request blocked to ${requestedHost}:${port}`, {
           level: 'error',
@@ -1107,7 +1126,7 @@ export function createHttpProxyServer(options: HttpProxyServerOptions): Server {
       const parentUrl =
         !mitmSocketPath &&
         options.parentProxy &&
-        !shouldBypassParentProxy(options.parentProxy, hostname)
+        !shouldBypassParentProxy(options.parentProxy, hostname, { isHttps })
           ? selectParentProxyUrl(options.parentProxy, {
               isHttps,
             })
@@ -1440,6 +1459,33 @@ export function createHttpProxyServer(options: HttpProxyServerOptions): Server {
   })
 
   return server
+}
+
+/**
+ * Domain policy belongs to the parent proxy for this destination.
+ * Malformed hosts stay on `filter` (it is what rejects them). A mitmProxy
+ * match is a different egress, so it stays on `filter` too.
+ */
+function parentDelegatesDomainPolicy(
+  options: HttpProxyServerOptions,
+  host: string,
+  isHttps: boolean,
+): boolean {
+  if (!isValidHost(host)) return false
+  const canonical = canonicalizeHost(host) ?? host
+  if (options.getMitmSocketPath?.(canonical)) return false
+  const delegated = delegatesDomainPolicyToParent(
+    options.parentProxy,
+    canonical,
+    { isHttps },
+  )
+  if (delegated) {
+    logForDebugging(
+      `HTTP ${host} domain policy deferred to parent proxy` +
+        (isHttps ? ' (CONNECT/HTTPS)' : ' (plain HTTP)'),
+    )
+  }
+  return delegated
 }
 
 /**

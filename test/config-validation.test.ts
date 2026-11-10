@@ -25,6 +25,28 @@ describe('Config Validation', () => {
     expect(result.success).toBe(true)
   })
 
+  test('should accept parentProxy.delegateDomainPolicy', () => {
+    const config = {
+      network: {
+        allowedDomains: [],
+        deniedDomains: [],
+        parentProxy: {
+          http: 'http://127.0.0.1:8080',
+          delegateDomainPolicy: true,
+        },
+      },
+      filesystem: {
+        denyRead: [],
+        allowWrite: [],
+        denyWrite: [],
+      },
+    }
+    const result = SandboxRuntimeConfigSchema.safeParse(config)
+    expect(result.success).toBe(true)
+    if (!result.success) return
+    expect(result.data.network.parentProxy?.delegateDomainPolicy).toBe(true)
+  })
+
   test('should validate a config with valid domains', () => {
     const config = {
       network: {

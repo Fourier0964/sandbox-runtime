@@ -6,6 +6,7 @@ import { isResolvedAddressDenied } from './resolved-address-guard.js'
 import {
   canonicalizeHost,
   connectViaParentProxy,
+  delegatesDomainPolicyToParent,
   dialDirect,
   isValidHost,
   openConnectTunnel,
@@ -40,7 +41,10 @@ export interface SocksProxyServerOptions {
   /**
    * Optional upstream HTTP proxy. When present, SOCKS CONNECT requests (those
    * not routed via mitmProxy) are tunnelled through the parent's HTTP CONNECT
-   * instead of dialing directly. NO_PROXY-matched hosts still connect directly.
+   * instead of dialing directly. NO_PROXY-matched hosts still connect
+   * directly. A loopback destination does too, unless this parent is itself
+   * on loopback — then it is tunnelled. With `delegateDomainPolicy`, those
+   * tunnelled destinations skip `filter`.
    */
   parentProxy?: ResolvedParentProxy
 
@@ -167,11 +171,28 @@ export function createSocksProxyServer(
 
       logForDebugging(`Connection request to ${hostname}:${port}`)
 
-      const allowed = await options.filter(
-        port,
-        hostname,
-        encodedCommandFromProxyUser(conn.username),
-      )
+      // Same route the connection handler dials: a mitm socket or a direct
+      // dial (loopback, NO_PROXY, no HTTPS parent URL) still hits `filter`.
+      // Only a destination that will CONNECT through the parent, and only
+      // when that parent opted into owning domain policy, skips it.
+      const canonical = canonicalizeHost(hostname) ?? hostname
+      const delegated =
+        !options.getMitmSocketPath?.(canonical) &&
+        delegatesDomainPolicyToParent(options.parentProxy, canonical, {
+          isHttps: true,
+        })
+      if (delegated) {
+        logForDebugging(
+          `SOCKS ${hostname}:${port} domain policy deferred to parent proxy`,
+        )
+      }
+      const allowed =
+        delegated ||
+        (await options.filter(
+          port,
+          hostname,
+          encodedCommandFromProxyUser(conn.username),
+        ))
 
       if (!allowed) {
         logForDebugging(`Connection blocked to ${hostname}:${port}`, {
@@ -218,7 +239,7 @@ export function createSocksProxyServer(
     const parentUrl =
       !mitmSocketPath &&
       options.parentProxy &&
-      !shouldBypassParentProxy(options.parentProxy, host)
+      !shouldBypassParentProxy(options.parentProxy, host, { isHttps: true })
         ? selectParentProxyUrl(options.parentProxy, { isHttps: true })
         : undefined
 

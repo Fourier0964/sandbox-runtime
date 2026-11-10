@@ -149,6 +149,7 @@ import type { GetBodySubstitutions } from './body-substitution.js'
 import {
   canonicalizeHost,
   isValidHost,
+  parentProxyHostsAreLoopback,
   redactUrl,
   resolveParentProxy,
 } from './parent-proxy.js'
@@ -2975,6 +2976,8 @@ async function wrapWithSandboxOnce(
         httpProxyPort: needsNetworkProxy ? getProxyPort() : undefined,
         socksProxyPort: needsNetworkProxy ? getSocksProxyPort() : undefined,
         proxyAuthToken: needsNetworkProxy ? proxyAuthToken : undefined,
+        routeLoopbackThroughProxy:
+          needsNetworkProxy && parentProxyHostsAreLoopback(parentProxy),
         caCertPath: mitmCA?.trustBundlePath,
         javaAgentJarPath: needsNetworkProxy ? javaAgentJarPath : undefined,
         readConfig,
@@ -3015,6 +3018,8 @@ async function wrapWithSandboxOnce(
           ? managerContext?.socksProxyPort
           : undefined,
         proxyAuthToken: needsNetworkProxy ? proxyAuthToken : undefined,
+        routeLoopbackThroughProxy:
+          needsNetworkProxy && parentProxyHostsAreLoopback(parentProxy),
         caCertPath: mitmCA?.trustBundlePath,
         javaAgentJarPath: needsNetworkProxy ? javaAgentJarPath : undefined,
         readConfig,
@@ -3219,6 +3224,8 @@ async function wrapWithSandboxArgv(
       httpProxyPort: hasNetworkConfig ? getProxyPort() : undefined,
       socksProxyPort: hasNetworkConfig ? getSocksProxyPort() : undefined,
       proxyAuthToken: hasNetworkConfig ? proxyAuthToken : undefined,
+      routeLoopbackThroughProxy:
+        hasNetworkConfig && parentProxyHostsAreLoopback(parentProxy),
       // `srt-win exec` launches nothing unless this is the loopback mode
       // the install recorded: a difference is refused, never ignored.
       allowLoopback: wantsLoopback,
@@ -3434,6 +3441,8 @@ async function spawnSandboxed(
     httpProxyPort: hasNetworkConfig ? getProxyPort() : undefined,
     socksProxyPort: hasNetworkConfig ? getSocksProxyPort() : undefined,
     proxyAuthToken: hasNetworkConfig ? proxyAuthToken : undefined,
+    routeLoopbackThroughProxy:
+      hasNetworkConfig && parentProxyHostsAreLoopback(parentProxy),
     setEnvVars: credentialRestrictions.setEnvVars,
     denyRead: unique([
       ...st.fsSet.denyRead,

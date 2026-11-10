@@ -38,6 +38,12 @@ export interface ResolvedParentProxy {
   httpUrl?: URL
   httpsUrl?: URL
   noProxy: NoProxyRules
+  /**
+   * From `network.parentProxy.delegateDomainPolicy`. When true, destinations
+   * that this resolution will actually tunnel through the parent are exempt
+   * from SRT's domain lists. See {@link delegatesDomainPolicyToParent}.
+   */
+  delegateDomainPolicy: boolean
 }
 
 interface NoProxyRules {
@@ -120,7 +126,14 @@ export function resolveParentProxy(
   // for nothing.
   if (!httpUrl && !httpsUrl) return undefined
 
-  return { httpUrl, httpsUrl, noProxy: parseNoProxy(noProxyRaw) }
+  return {
+    httpUrl,
+    httpsUrl,
+    noProxy: parseNoProxy(noProxyRaw),
+    // Explicit config only. A parent taken solely from HTTP_PROXY /
+    // HTTPS_PROXY keeps SRT's domain lists; those env vars are a transport.
+    delegateDomainPolicy: cfg?.delegateDomainPolicy === true,
+  }
 }
 
 function parseNoProxy(raw: string): NoProxyRules {
@@ -169,8 +182,43 @@ function parseNoProxy(raw: string): NoProxyRules {
 }
 
 /**
+ * True for `localhost` and an IPv4/IPv6 loopback literal, including
+ * IPv4-mapped forms. `host` may be bracketed.
+ */
+export function hostIsLoopback(host: string): boolean {
+  const h = stripBrackets(host.toLowerCase().replace(/\.$/, ''))
+  return h === 'localhost' || isLoopbackAddress(h)
+}
+
+/**
+ * True when every parent URL this resolution would dial is a loopback
+ * address. The sandboxed child's `NO_PROXY` then keeps loopback destinations
+ * on the proxy, so they reach that parent instead of being dialed direct.
+ * A remote parent still forces the loopback bypass: forwarding `127.0.0.1`
+ * there would hit the remote machine's loopback.
+ */
+export function parentProxyHostsAreLoopback(
+  resolved: ResolvedParentProxy | undefined,
+): boolean {
+  if (!resolved) return false
+  const urls = [resolved.httpUrl, resolved.httpsUrl].filter(
+    (u): u is URL => u !== undefined,
+  )
+  return urls.length > 0 && urls.every(u => hostIsLoopback(u.hostname))
+}
+
+/**
  * Returns true if the given host should bypass the parent proxy and connect
- * directly. Always bypasses loopback.
+ * directly.
+ *
+ * Loopback destinations bypass unless the parent URL this request would
+ * actually use ({@link selectParentProxyUrl}) is itself a loopback address.
+ * A loopback parent can reach this machine's loopback and is the gate for
+ * it; a remote parent must not be asked to dial `127.0.0.1`. An explicit
+ * `noProxy` match still bypasses, including when the parent is loopback.
+ *
+ * `opts.isHttps` selects which parent URL counts (CONNECT and SOCKS pass
+ * true; plain HTTP passes false). Omitted means true, matching CONNECT.
  *
  * NB: the port is not consulted. NO_PROXY entries of the form `host:port` are
  * matched by host only (the port suffix is stripped during parsing).
@@ -178,12 +226,18 @@ function parseNoProxy(raw: string): NoProxyRules {
 export function shouldBypassParentProxy(
   resolved: ResolvedParentProxy,
   host: string,
+  opts?: { isHttps?: boolean },
 ): boolean {
   const h = stripBrackets(host.toLowerCase().replace(/\.$/, ''))
 
-  // Always bypass loopback — chaining localhost through an upstream proxy is
-  // never what you want. Covers the whole 127/8 block and IPv4-mapped forms.
-  if (h === 'localhost' || isLoopbackAddress(h)) return true
+  // Covers the whole 127/8 block and IPv4-mapped forms. Lifted only when
+  // the selected parent is on loopback; explicit noProxy still applies below.
+  if (h === 'localhost' || isLoopbackAddress(h)) {
+    const parentUrl = selectParentProxyUrl(resolved, {
+      isHttps: opts?.isHttps ?? true,
+    })
+    if (!parentUrl || !hostIsLoopback(parentUrl.hostname)) return true
+  }
 
   if (resolved.noProxy.all) return true
   if (addressInSet(resolved.noProxy.cidr, h)) return true
@@ -212,6 +266,29 @@ export function selectParentProxyUrl(
   // — matches curl's behaviour where HTTP requests go direct if only
   // HTTPS_PROXY is configured.
   return resolved.httpUrl
+}
+
+/**
+ * Whether SRT should skip its own domain allow/deny lists for `host`.
+ *
+ * True only when the caller has opted in and this destination will be
+ * tunnelled through the parent: the same parent URL {@link selectParentProxyUrl}
+ * would dial, and not a NO_PROXY bypass or a loopback destination whose
+ * parent is not itself on loopback. The caller must still exclude a
+ * mitmProxy route — that hop is not this parent.
+ *
+ * `isHttps` matches the dial sites: CONNECT and SOCKS pass true (they use
+ * the HTTPS parent, falling back to HTTP); a plain HTTP forward passes
+ * false, so a request that would dial directly is not exempt.
+ */
+export function delegatesDomainPolicyToParent(
+  resolved: ResolvedParentProxy | undefined,
+  host: string,
+  opts: { isHttps: boolean },
+): boolean {
+  if (!resolved?.delegateDomainPolicy) return false
+  if (shouldBypassParentProxy(resolved, host, opts)) return false
+  return selectParentProxyUrl(resolved, opts) !== undefined
 }
 
 // ---------------------------------------------------------------------------

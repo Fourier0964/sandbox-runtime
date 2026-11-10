@@ -387,6 +387,11 @@ export interface MxcSandboxParams {
   httpProxyPort?: number
   socksProxyPort?: number
   proxyAuthToken?: string
+  /**
+   * Parent proxy is on loopback, so the child's NO_PROXY must not exempt
+   * loopback destinations.
+   */
+  routeLoopbackThroughProxy?: boolean
   /** `mode:'mask'` sentinels; the child inherits no other env. */
   setEnvVars?: Readonly<Record<string, string>>
   /** srt read deny-list (expanded, concrete paths). */
@@ -425,6 +430,7 @@ export function buildMxcRequest(p: MxcSandboxParams): MxcRequest {
     p.proxyAuthToken,
     undefined,
     encodedCommand,
+    p.routeLoopbackThroughProxy,
   )
 
   const readwritePaths = [

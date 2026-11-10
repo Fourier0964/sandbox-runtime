@@ -100,6 +100,28 @@ describe('generateProxyEnvVars', () => {
   })
 
   describe('NO_PROXY', () => {
+    it('keeps loopback on the proxy when the parent is loopback', () => {
+      const env = generateProxyEnvVars(
+        3128,
+        1080,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        true,
+      )
+      for (const name of ['NO_PROXY', 'no_proxy']) {
+        const entry = env.find(e => e.startsWith(`${name}=`))
+        expect(entry).toBeDefined()
+        const tokens = entry!.slice(name.length + 1).split(',')
+        expect(tokens).not.toContain('localhost')
+        expect(tokens).not.toContain('127.0.0.1')
+        expect(tokens).not.toContain('::1')
+        expect(tokens).toContain('10.0.0.0/8')
+        expect(tokens).toContain('192.168.0.0/16')
+      }
+    })
+
     it('does not exclude .local hostnames from the proxy', () => {
       // Under network restriction the child has no usable resolver, so a
       // NO_PROXY match on *.local makes clients attempt direct getaddrinfo()

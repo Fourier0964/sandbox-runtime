@@ -146,6 +146,18 @@ const ParentProxyConfigSchema = z.object({
       'Comma-separated NO_PROXY list (hostname suffixes and CIDR ranges). ' +
         'Matching destinations connect directly instead of via the parent proxy.',
     ),
+  delegateDomainPolicy: z
+    .boolean()
+    .optional()
+    .describe(
+      'When true, a destination SRT actually tunnels through this parent ' +
+        'proxy skips network.allowedDomains, network.deniedDomains, ' +
+        'per-command allow lists, and the ask callback. The parent is the ' +
+        'domain gate. Loopback, NO_PROXY matches, mitmProxy hosts, and any ' +
+        'request that would dial directly (no parent URL for that scheme) ' +
+        'stay on SRT domain policy. Unset or false keeps the allow/deny ' +
+        'lists on every hop, including traffic chained through the parent.',
+    ),
 })
 
 /**
