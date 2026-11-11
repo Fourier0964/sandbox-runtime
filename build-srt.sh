@@ -19,11 +19,9 @@ DIST="dist"
 BASE_VERSION="0.0.82"   # ADK 侧 SRTCompatibleVersion 的基线
 VERSION_CODE=""
 TARGETS_ARG=""
-# 与本仓并列的 office-cowork/pi-runtime-sdk。产物要进它的 assets/，
-# 宿主打包时从那里取二进制，而不是从本仓被 gitignore 的 dist/。
-DEFAULT_ASSETS="$(cd "$(dirname "$0")" && pwd)/../office-cowork/pi-runtime-sdk/assets"
+# 产物默认只落在本仓的 dist/（已被 gitignore）。需要给别的仓库用时，
+# 用 --assets <目录> 显式指定，脚本不去猜任何兄弟仓库的位置。
 ASSETS_DIR=""
-SKIP_ASSETS=0
 
 usage() {
   cat <<'USAGE'
@@ -36,16 +34,13 @@ usage() {
   --targets "<目标列表>"  空格分隔，默认 "darwin-arm64 linux-x64 linux-arm64"。
                           可选值: darwin-arm64 darwin-x64 linux-x64 linux-arm64
   --base <基线>           ADK 要求的基线版本，默认 0.0.82。一般不用改。
-  --assets <目录>         编完后把二进制再复制一份到这里。
-                          默认是 ../office-cowork/pi-runtime-sdk/assets
-                          （该目录的上级存在时才复制）。
-  --no-assets             只写 dist/，不复制到 pi-runtime-sdk。
+  --assets <目录>         编完后把二进制再复制一份到这里（可选，默认不复制）。
   -h, --help              显示本帮助。
 
 说明:
   版本号必须等于基线或 "<基线>-<后缀>"，否则 ADK 的 ossandbox 会拒绝启动。
   产出的二进制写在 dist/，该目录已被 .gitignore 忽略。
-  同一批文件再复制到 pi-runtime-sdk/assets，供宿主仓库一并提交。
+  要交给别的仓库（例如宿主打包）时，加 --assets <目录> 复制一份过去。
 USAGE
 }
 
@@ -75,7 +70,6 @@ while [ $# -gt 0 ]; do
     --base=*)        BASE_VERSION="${1#*=}"; shift ;;
     --assets)        [ $# -ge 2 ] || die "--assets 需要一个目录"; ASSETS_DIR="$2"; shift 2 ;;
     --assets=*)      ASSETS_DIR="${1#*=}"; shift ;;
-    --no-assets)     SKIP_ASSETS=1; shift ;;
     -h|--help)       usage; exit 0 ;;
     *)               die "未知参数: $1（--help 看用法）" ;;
   esac
@@ -242,26 +236,17 @@ for target in $TARGETS; do
   printf '  %s  %s\n' "$sum" "srt-$target"
 done
 
-# ---- 复制到 pi-runtime-sdk/assets ---------------------------------------
+# ---- 可选：把产物复制到 --assets 指定的目录 ------------------------------
 
-if [ "$SKIP_ASSETS" -eq 0 ]; then
-  if [ -z "$ASSETS_DIR" ]; then
-    if [ -d "$(dirname "$DEFAULT_ASSETS")" ]; then
-      ASSETS_DIR="$DEFAULT_ASSETS"
-    fi
-  fi
-  if [ -n "$ASSETS_DIR" ]; then
-    mkdir -p "$ASSETS_DIR"
-    printf '\n'
-    note "复制到 $ASSETS_DIR"
-    for target in $TARGETS; do
-      cp -p "$DIST/srt-$target" "$ASSETS_DIR/srt-$target"
-      chmod +x "$ASSETS_DIR/srt-$target"
-      printf '  %s\n' "srt-$target"
-    done
-  else
-    warn "未找到 pi-runtime-sdk，产物只留在 dist/。需要时用 --assets <目录>。"
-  fi
+if [ -n "$ASSETS_DIR" ]; then
+  mkdir -p "$ASSETS_DIR"
+  printf '\n'
+  note "复制到 $ASSETS_DIR"
+  for target in $TARGETS; do
+    cp -p "$DIST/srt-$target" "$ASSETS_DIR/srt-$target"
+    chmod +x "$ASSETS_DIR/srt-$target"
+    printf '  %s\n' "srt-$target"
+  done
 fi
 
 if [ -n "$PKG_BACKUP" ]; then
